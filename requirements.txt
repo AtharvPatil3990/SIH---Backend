@@ -1,0 +1,26 @@
+# --- Core Web Framework & Server ---
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+
+# --- API Requests & Background Scheduling ---
+httpx
+apscheduler
+
+# --- Database Integration ---
+supabase
+
+# --- Thermal Stress Engine ---
+pythermalcomfort
+
+# --- Data Processing & Machine Learning ---
+pandas
+numpy
+scikit-learn
+xgboost
+joblib
+
+# --- Automated Alerting ---
+twilio
+python-dotenv

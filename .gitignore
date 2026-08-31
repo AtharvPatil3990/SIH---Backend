@@ -216,3 +216,80 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# ==========================================
+# 1. ENVIRONMENT VARIABLES & SECRETS (CRITICAL)
+# ==========================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ==========================================
+# 2. PYTHON & FASTAPI (BACKEND)
+# ==========================================
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environments
+venv/
+env/
+.venv/
+env.bak/
+venv.bak/
+
+# Logs and databases
+*.log
+*.sqlite3
+
+# Pytest
+.pytest_cache/
+
+# ==========================================
+# 3. NODE.JS & REACT/NEXT.JS (FRONTEND)
+# ==========================================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Next.js build output
+.next/
+out/
+build/
+dist/
+
+# ==========================================
+# 4. MACHINE LEARNING & DATA
+# ==========================================
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Data sets (Don't commit massive CSVs to GitHub!)
+*.csv
+*.dat
+*.hdf5
+*.parquet
+
+# ==========================================
+# 5. OS & IDE FILES
+# ==========================================
+# Mac
+.DS_Store
+.AppleDouble
+.LSOverride
+__MACOSX/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
