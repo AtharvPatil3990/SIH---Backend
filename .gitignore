@@ -293,3 +293,8 @@ Desktop.ini
 .vscode/
 .idea/
 *.swp
+
+# cache files
+.cache.sqlite
+.cache.sqlite-shm
+.cache.sqlite-wal
