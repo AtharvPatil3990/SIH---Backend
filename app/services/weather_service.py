@@ -3,18 +3,17 @@ import requests_cache
 from retry_requests import retry
 
 # 1. Setup the Open-Meteo client with caching and retries
-# This caches responses for 1 hour (3600 seconds) to save API calls
 cache_session = requests_cache.CachedSession('.cache', expire_after=1800)
 retry_session = retry(cache_session, retries=5, backoff_factor=0.2)
 openmeteo = openmeteo_requests.Client(session=retry_session)
 
-def fetch_ward_weather(lat: float, lon: float, days: int = 5) -> dict:
+def fetch_ward_weather(lat: float, lon: float, days: int = 5, past_days: int = 2) -> dict:
     """
-    Fetches weather using the official FlatBuffers SDK and extracts 2:00 PM data.
+    Fetches weather using the official FlatBuffers SDK, calculates cumulative 
+    heat stress using past days, and extracts specific timepoints.
     """
     url = "https://api.open-meteo.com/v1/forecast"
     
-    # 2. Define exactly what your early warning system needs       
     params = {
         "latitude": lat,
         "longitude": lon,
@@ -23,9 +22,9 @@ def fetch_ward_weather(lat: float, lon: float, days: int = 5) -> dict:
             "relative_humidity_2m", 
             "wind_speed_10m",
             "shortwave_radiation",
-            "wet_bulb_temperature_2m",  # <-- ADDED: Live wet bulb check
-            "precipitation",    # <-- ADDED: Live rain check
-            "is_day"            # <-- ADDED: 1 for Day, 0 for Night (for UI icons)
+            "wet_bulb_temperature_2m",
+            "precipitation",    
+            "is_day"            
         ],
         "hourly": [
             "temperature_2m", 
@@ -33,9 +32,10 @@ def fetch_ward_weather(lat: float, lon: float, days: int = 5) -> dict:
             "wind_speed_10m", 
             "wet_bulb_temperature_2m",
             "shortwave_radiation",
-            "precipitation"     # <-- ADDED: Hourly rain check
+            "precipitation"     
         ],
-        "forecast_days": days,
+        "past_days": past_days, # 2 days of historical data
+        "forecast_days": days,  # 5 days of forecast
         "wind_speed_unit": "ms",
         "timezone": "Asia/Kolkata"
     }
@@ -53,7 +53,6 @@ def fetch_ward_weather(lat: float, lon: float, days: int = 5) -> dict:
     current_precip = current.Variables(5).Value()
     current_is_day = current.Variables(6).Value()
     
-    
     # --- 2. EXTRACT HOURLY FORECAST DATA ---
     hourly = response.Hourly()
     temp_array = hourly.Variables(0).ValuesAsNumpy()
@@ -63,40 +62,60 @@ def fetch_ward_weather(lat: float, lon: float, days: int = 5) -> dict:
     radiation_array = hourly.Variables(4).ValuesAsNumpy()
     precip_array = hourly.Variables(5).ValuesAsNumpy()
 
+    # Helper function for uniform data structure
+    def get_hour_data(idx: int) -> dict:
+        return {
+            "temp_c": float(temp_array[idx]),
+            "humidity": float(rh_array[idx]),
+            "wind_speed": float(wind_array[idx]),
+            "wet_bulb_c": float(wet_bulb_array[idx]),
+            "solar_radiation": float(radiation_array[idx]),
+            "precipitation_mm": float(precip_array[idx])
+        }
+
+    # --- 3. CUMULATIVE HEAT STRESS LOGIC ---
+    WET_BULB_THRESHOLD = 26.0
+    daily_2pm_wet_bulbs = []
+    
+    # Extract 2:00 PM wet-bulbs for ALL 7 days (2 past + 5 forecast)
+    for d in range(past_days + days):
+        idx = (d * 24) + 14  
+        daily_2pm_wet_bulbs.append(wet_bulb_array[idx])
+
     forecast_list = []
 
-    for day in range(days):
-        base_idx = day * 24
+    # Loop ONLY through the 5 forecast days
+    for forecast_day in range(days):
+        # Shift index to skip the 2 past days (Today is index 2)
+        day_index = forecast_day + past_days 
+        
+        # Calculate lag effects
+        e_t = max(0, daily_2pm_wet_bulbs[day_index] - WET_BULB_THRESHOLD)
+        e_t1 = max(0, daily_2pm_wet_bulbs[day_index - 1] - WET_BULB_THRESHOLD)
+        e_t2 = max(0, daily_2pm_wet_bulbs[day_index - 2] - WET_BULB_THRESHOLD)
+        
+        # Base Cumulative Heat Stress
+        h_t = (0.5 * e_t) + (0.3 * e_t1) + (0.2 * e_t2)
+        
+        # Calculate indices for JSON extraction
+        base_idx = day_index * 24
         min_5am_idx = base_idx + 5
         peak_2pm_idx = base_idx + 14
         evening_6pm_idx = base_idx + 18
         
+        # Apply Rain Suppression Rule
+        rain_2pm = float(precip_array[peak_2pm_idx])
+        if rain_2pm > 2.0:
+            h_t = h_t * 0.5 
+        
+        # Build uniform JSON block
         forecast_list.append({
-            "day_offset": day,
-            "night_minimum_5am": {
-                "temp_c": float(temp_array[min_5am_idx]),
-                "humidity": float(rh_array[min_5am_idx]),
-                "wind_speed": float(wind_array[min_5am_idx]),
-                "wet_bulb_c": float(wet_bulb_array[min_5am_idx]),
-                "solar_radiation": float(radiation_array[min_5am_idx]),
-                "precipitation_mm": float(precip_array[min_5am_idx])
-            },
-            
-            "peak_stress_2pm": {
-                "temp_c": float(temp_array[peak_2pm_idx]),
-                "humidity": float(rh_array[peak_2pm_idx]),
-                "wind_speed": float(wind_array[peak_2pm_idx]),
-                "wet_bulb_c": float(wet_bulb_array[peak_2pm_idx]),
-                "solar_radiation": float(radiation_array[peak_2pm_idx]),
-                "precipitation_mm": float(precip_array[peak_2pm_idx]) # <-- Sent to Risk Engine
-            },
-            "evening_retained_6pm": {
-                "temp_c": float(temp_array[evening_6pm_idx]),
-                "humidity": float(rh_array[evening_6pm_idx]),
-                "wind_speed": float(wind_array[evening_6pm_idx]),
-                "wet_bulb_c": float(wet_bulb_array[evening_6pm_idx]),
-                "solar_radiation": float(radiation_array[evening_6pm_idx]),
-                "precipitation_mm": float(precip_array[evening_6pm_idx])
+            "day_offset": forecast_day,
+            "night_minimum_5am": get_hour_data(min_5am_idx),
+            "peak_stress_2pm": get_hour_data(peak_2pm_idx),
+            "evening_retained_6pm": get_hour_data(evening_6pm_idx),
+            "ml_features": {
+                "cumulative_heat_stress": float(h_t)
             }
         })
 
@@ -108,7 +127,15 @@ def fetch_ward_weather(lat: float, lon: float, days: int = 5) -> dict:
             "wet_bulb_c": float(current_wet_bulb),
             "solar_radiation": float(current_rad),
             "precipitation_mm": float(current_precip),
-            "is_day": int(current_is_day)  # 1 = Day, 0 = Night
+            "is_day": int(current_is_day) 
         },
         "forecast": forecast_list
     }
+    
+    
+if __name__ == "__main__":
+    # Example usage
+    lat = 18.52  # Latitude for New Delhi
+    lon =  73.86 # Longitude for New Delhi
+    weather_data = fetch_ward_weather(lat, lon)
+    print(weather_data)
