@@ -298,3 +298,6 @@ Desktop.ini
 .cache.sqlite
 .cache.sqlite-shm
 .cache.sqlite-wal
+
+# Raw data
+data/raw/*.xlsx
