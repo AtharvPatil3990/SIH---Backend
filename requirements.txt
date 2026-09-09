@@ -24,3 +24,8 @@ joblib
 # --- Automated Alerting ---
 twilio
 python-dotenv
+
+requests-cache
+realtime
+requests
+openmeteo-requests
