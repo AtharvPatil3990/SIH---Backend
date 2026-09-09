@@ -91,77 +91,49 @@ def get_ward_prediction(ward_uuid: str): # <-- Changed to str to accept UUID
     ward_data = ward_res.data[0]
 
     # B. Fetch Cached 7-Day Weather Forecast
-    # Uses 'census_ward_number' column which stores the UUID foreign key per your schema
-    weather_res = supabase.table('weather_forecasts')\
+    # weather_res = calculate_ward_prediction(ward_uuid, supabase)
+        
+    # return weather_res
+    weather_res = supabase.table('weather_cache')\
         .select('*')\
-        .eq('census_ward_number', ward_uuid)\
+        .eq('ward_id', ward_uuid)\
         .gte('forecast_date', str(date.today()))\
         .order('forecast_date')\
         .execute()
+
+    # Null Check: Repackage and return if all 5 days exist
+    if weather_res.data and len(weather_res.data) >= 5:
+        db_rows = weather_res.data
         
-    weather_res = calculate_ward_prediction(ward_uuid, supabase)
-        
-    return weather_res
-    # forecast_results = []
-    # BASE_RATE = 0.00015
+        formatted_forecast = []
+        for row in db_rows:
+            formatted_forecast.append({
+                "predicted_hospitalizations": row["predicted_hospitalizations"],
+                "alert_tier": row["alert_tier"],
+                "weather_snapshot": {
+                    "night_minimum_5am": row["weather_5am"],
+                    "peak_stress_2pm": row["weather_2pm"],
+                    "evening_retained_6pm": row["weather_6pm"]
+                }
+            })
 
-    # # C. Process Each Day Through the XGBoost Model
-    # for day in weather_res.data:
-    #     feature_dict = {
-    #         'ward_elderly_pct': ward_data['ward_elderly_pct'],
-    #         'child_pct': ward_data['child_pct'],
-    #         'slum_pct': ward_data['slum_pct'],
-    #         'temp_c': day['temp_c'],
-    #         'humidity': day['humidity'],
-    #         'wind_speed': day['wind_speed'],
-    #         'solar_radiation': day['solar_radiation'],
-    #         'precipitation_mm': day['precipitation_mm'],
-    #         'is_day': 1, 
-    #         'wet_bulb_c': day['wet_bulb_c'],
-    #         'utci_c': day['utci_c'],
-    #         'cumul_utci_stress': day['cumul_utci_stress']
-    #     }
-        
-    #     df_features = pd.DataFrame([feature_dict])
-    #     risk_multiplier = float(xgb_model.predict(df_features)[0])
-    #     expected_casualties = int((ward_data['total_population'] * BASE_RATE) * risk_multiplier)
+        return {
+            "source": "database_cache",
+            "data": {
+                "ward_uuid": ward_uuid,
+                "current": {
+                    "predicted_hospitalizations": db_rows[0]["predicted_hospitalizations"],
+                    "alert_tier": db_rows[0]["alert_tier"],
+                    "weather_snapshot": {
+                        "night_minimum_5am": db_rows[0]["weather_5am"],
+                        "peak_stress_2pm": db_rows[0]["weather_2pm"],
+                        "evening_retained_6pm": db_rows[0]["weather_6pm"]
+                    }
+                },
+                "forecast": formatted_forecast
+            }
+        }
 
-    #     if expected_casualties > 10:
-    #         alert = "RED_EMERGENCY"
-    #     elif expected_casualties > 5:
-    #         alert = "ORANGE_ALERT"
-    #     elif expected_casualties > 2:
-    #         alert = "YELLOW_WARNING"
-    #     else:
-    #         alert = "NORMAL"
-
-    #     forecast_results.append({
-    #         "date": day['forecast_date'],
-    #         "utci_c": day['utci_c'],
-    #         "risk_multiplier": round(risk_multiplier, 2),
-    #         "estimated_admissions": expected_casualties,
-    #         "alert_tier": alert,
-    #         "recommended_actions": ALERT_ACTIONS[alert]
-    #     })
-
-    # # D. Fetch Live Weather via HTTP Cache
-    # try:
-    #     live_weather_payload = weather_service.fetch_ward_weather(
-    #         lat=ward_data['latitude'], 
-    #         lon=ward_data['longitude']
-    #     )
-    #     live_current = live_weather_payload['current']
-    # except Exception as e:
-    #     print(f"Live weather fetch failed: {e}")
-    #     live_current = None
-
-    # # E. Return Blended Payload
-    # return {
-    #     "ward_uuid": ward_uuid,
-    #     "census_ward_number": ward_data['census_ward_number'],
-    #     "ward_name": ward_data['ward_name'],
-    #     "hvi_score": ward_data['hvi_score'],
-    #     "total_population": ward_data['total_population'],
-    #     "live_weather": live_current,
-    #     "forecast": forecast_results
-    # }
+    # 2. FALLBACK: Cache was empty, pass control to prediction service
+    print("Cache miss! Calculating live predictions...")
+    return calculate_ward_prediction(ward_uuid, supabase)
