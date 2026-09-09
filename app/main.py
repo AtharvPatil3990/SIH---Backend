@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from datetime import date
+from app.services.weather_service import fetch_ward_weather
+from app.services.prediction_service import calculate_ward_prediction
 
 # Import your HTTP-cached weather service
 from app.services import weather_service
@@ -97,70 +99,69 @@ def get_ward_prediction(ward_uuid: str): # <-- Changed to str to accept UUID
         .order('forecast_date')\
         .execute()
         
-    if not weather_res.data:
-        raise HTTPException(status_code=404, detail="Weather cache missing. Ensure cron job has run.")
-
-    forecast_results = []
-    BASE_RATE = 0.00015
-
-    # C. Process Each Day Through the XGBoost Model
-    for day in weather_res.data:
-        feature_dict = {
-            'ward_elderly_pct': ward_data['ward_elderly_pct'],
-            'child_pct': ward_data['child_pct'],
-            'slum_pct': ward_data['slum_pct'],
-            'temp_c': day['temp_c'],
-            'humidity': day['humidity'],
-            'wind_speed': day['wind_speed'],
-            'solar_radiation': day['solar_radiation'],
-            'precipitation_mm': day['precipitation_mm'],
-            'is_day': 1, 
-            'wet_bulb_c': day['wet_bulb_c'],
-            'utci_c': day['utci_c'],
-            'cumul_utci_stress': day['cumul_utci_stress']
-        }
+    weather_res = calculate_ward_prediction(ward_uuid, supabase)
         
-        df_features = pd.DataFrame([feature_dict])
-        risk_multiplier = float(xgb_model.predict(df_features)[0])
-        expected_casualties = int((ward_data['total_population'] * BASE_RATE) * risk_multiplier)
+    return weather_res
+    # forecast_results = []
+    # BASE_RATE = 0.00015
 
-        if expected_casualties > 10:
-            alert = "RED_EMERGENCY"
-        elif expected_casualties > 5:
-            alert = "ORANGE_ALERT"
-        elif expected_casualties > 2:
-            alert = "YELLOW_WARNING"
-        else:
-            alert = "NORMAL"
+    # # C. Process Each Day Through the XGBoost Model
+    # for day in weather_res.data:
+    #     feature_dict = {
+    #         'ward_elderly_pct': ward_data['ward_elderly_pct'],
+    #         'child_pct': ward_data['child_pct'],
+    #         'slum_pct': ward_data['slum_pct'],
+    #         'temp_c': day['temp_c'],
+    #         'humidity': day['humidity'],
+    #         'wind_speed': day['wind_speed'],
+    #         'solar_radiation': day['solar_radiation'],
+    #         'precipitation_mm': day['precipitation_mm'],
+    #         'is_day': 1, 
+    #         'wet_bulb_c': day['wet_bulb_c'],
+    #         'utci_c': day['utci_c'],
+    #         'cumul_utci_stress': day['cumul_utci_stress']
+    #     }
+        
+    #     df_features = pd.DataFrame([feature_dict])
+    #     risk_multiplier = float(xgb_model.predict(df_features)[0])
+    #     expected_casualties = int((ward_data['total_population'] * BASE_RATE) * risk_multiplier)
 
-        forecast_results.append({
-            "date": day['forecast_date'],
-            "utci_c": day['utci_c'],
-            "risk_multiplier": round(risk_multiplier, 2),
-            "estimated_admissions": expected_casualties,
-            "alert_tier": alert,
-            "recommended_actions": ALERT_ACTIONS[alert]
-        })
+    #     if expected_casualties > 10:
+    #         alert = "RED_EMERGENCY"
+    #     elif expected_casualties > 5:
+    #         alert = "ORANGE_ALERT"
+    #     elif expected_casualties > 2:
+    #         alert = "YELLOW_WARNING"
+    #     else:
+    #         alert = "NORMAL"
 
-    # D. Fetch Live Weather via HTTP Cache
-    try:
-        live_weather_payload = weather_service.fetch_ward_weather(
-            lat=ward_data['latitude'], 
-            lon=ward_data['longitude']
-        )
-        live_current = live_weather_payload['current']
-    except Exception as e:
-        print(f"Live weather fetch failed: {e}")
-        live_current = None
+    #     forecast_results.append({
+    #         "date": day['forecast_date'],
+    #         "utci_c": day['utci_c'],
+    #         "risk_multiplier": round(risk_multiplier, 2),
+    #         "estimated_admissions": expected_casualties,
+    #         "alert_tier": alert,
+    #         "recommended_actions": ALERT_ACTIONS[alert]
+    #     })
 
-    # E. Return Blended Payload
-    return {
-        "ward_uuid": ward_uuid,
-        "city_corporation": ward_data['city_corporation'],
-        "census_ward_number": ward_data['census_ward_number'],
-        "ward_name": ward_data['ward_name'],
-        "hvi_score": ward_data['hvi_score'],
-        "total_population": ward_data['total_population'],
-        "live_weather": live_current,
-        "forecast": forecast_results
-    }
+    # # D. Fetch Live Weather via HTTP Cache
+    # try:
+    #     live_weather_payload = weather_service.fetch_ward_weather(
+    #         lat=ward_data['latitude'], 
+    #         lon=ward_data['longitude']
+    #     )
+    #     live_current = live_weather_payload['current']
+    # except Exception as e:
+    #     print(f"Live weather fetch failed: {e}")
+    #     live_current = None
+
+    # # E. Return Blended Payload
+    # return {
+    #     "ward_uuid": ward_uuid,
+    #     "census_ward_number": ward_data['census_ward_number'],
+    #     "ward_name": ward_data['ward_name'],
+    #     "hvi_score": ward_data['hvi_score'],
+    #     "total_population": ward_data['total_population'],
+    #     "live_weather": live_current,
+    #     "forecast": forecast_results
+    # }

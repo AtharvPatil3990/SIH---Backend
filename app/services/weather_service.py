@@ -1,7 +1,7 @@
 import openmeteo_requests
 import requests_cache
 from retry_requests import retry
-from thermal_service import calculate_utci # Import your new UTCI service
+from app.services.thermal_service import calculate_utci 
 
 # 1. Setup the Open-Meteo client with caching and retries
 cache_session = requests_cache.CachedSession('.cache', expire_after=1800)
@@ -55,12 +55,13 @@ def fetch_ward_weather(lat: float, lon: float, days: int = 5, past_days: int = 2
     current_is_day = int(current.Variables(6).Value())
     
     # Calculate Live UTCI
-    current_utci = calculate_utci(
+    current_utci_obj = calculate_utci(
         temp_c=current_temp, 
         wind_speed_10m=current_wind, 
         humidity=current_rh, 
         solar_radiation=current_rad
     )
+    current_utci = float(current_utci_obj.utci)
     
     # --- 2. EXTRACT HOURLY FORECAST DATA ---
     hourly = response.Hourly()
@@ -71,14 +72,13 @@ def fetch_ward_weather(lat: float, lon: float, days: int = 5, past_days: int = 2
     radiation_array = hourly.Variables(4).ValuesAsNumpy()
     precip_array = hourly.Variables(5).ValuesAsNumpy()
 
-    # Helper function for uniform data structure (Now includes UTCI)
     def get_hour_data(idx: int) -> dict:
         t_c = float(temp_array[idx])
         rh = float(rh_array[idx])
         wind = float(wind_array[idx])
         rad = float(radiation_array[idx])
         
-        utci_val = calculate_utci(temp_c=t_c, wind_speed_10m=wind, humidity=rh, solar_radiation=rad)
+        utci_val = calculate_utci(temp_c=t_c, wind_speed_10m=wind, humidity=rh, solar_radiation=rad).utci
         
         return {
             "temp_c": t_c,
@@ -90,11 +90,11 @@ def fetch_ward_weather(lat: float, lon: float, days: int = 5, past_days: int = 2
             "utci_c": round(float(utci_val), 2)
         }
 
-    # --- 3. CUMULATIVE HEAT STRESS LOGIC (NOW USING UTCI) ---
+    # --- 3. CUMULATIVE HEAT STRESS LOGIC ---
     UTCI_THRESHOLD = 34.0
     daily_2pm_utci = []
     
-    # Extract 2:00 PM UTCI for ALL 7 days (2 past + 5 forecast) by calculating it on the fly
+    # Extract 2:00 PM UTCI for ALL 7 days (2 past + 5 forecast)
     for d in range(past_days + days):
         idx = (d * 24) + 14  
         t_c = float(temp_array[idx])
@@ -102,60 +102,60 @@ def fetch_ward_weather(lat: float, lon: float, days: int = 5, past_days: int = 2
         wind = float(wind_array[idx])
         rad = float(radiation_array[idx])
         
-        day_utci = calculate_utci(temp_c=t_c, wind_speed_10m=wind, humidity=rh, solar_radiation=rad)
-        daily_2pm_utci.append(day_utci.utci)
+        day_utci = calculate_utci(temp_c=t_c, wind_speed_10m=wind, humidity=rh, solar_radiation=rad).utci
+        daily_2pm_utci.append(day_utci)
 
+    # --- 4. CALCULATE LIVE CUMULATIVE STRESS (FOR CURRENT/ON-DEMAND) ---
+    e_current = max(0, current_utci - UTCI_THRESHOLD)
+    e_yesterday = max(0, daily_2pm_utci[past_days - 1] - UTCI_THRESHOLD)
+    e_day_before = max(0, daily_2pm_utci[past_days - 2] - UTCI_THRESHOLD)
+    
+    current_cumul_stress = (0.5 * e_current) + (0.3 * e_yesterday) + (0.2 * e_day_before)
+    
+    # Rain suppression rule for current conditions
+    if current_precip > 2.0:
+        current_cumul_stress *= 0.5
+
+    # --- 5. CALCULATE FORECAST CUMULATIVE STRESS ---
     forecast_list = []
-
-    # Loop ONLY through the 5 forecast days
     for forecast_day in range(days):
         day_index = forecast_day + past_days 
         
-        # Calculate lag effects using the calculated UTCI Array
         e_t = max(0, daily_2pm_utci[day_index] - UTCI_THRESHOLD)
         e_t1 = max(0, daily_2pm_utci[day_index - 1] - UTCI_THRESHOLD)
         e_t2 = max(0, daily_2pm_utci[day_index - 2] - UTCI_THRESHOLD)
         
         h_t = (0.5 * e_t) + (0.3 * e_t1) + (0.2 * e_t2)
         
-        # Array Indices
         base_idx = day_index * 24
         min_5am_idx = base_idx + 5
         peak_2pm_idx = base_idx + 14
         evening_6pm_idx = base_idx + 18
         
-        # Apply Rain Suppression Rule
         rain_2pm = float(precip_array[peak_2pm_idx])
         if rain_2pm > 2.0:
-            h_t = h_t * 0.5 
+            h_t *= 0.5 
         
         forecast_list.append({
             "day_offset": forecast_day,
             "night_minimum_5am": get_hour_data(min_5am_idx),
             "peak_stress_2pm": get_hour_data(peak_2pm_idx),
             "evening_retained_6pm": get_hour_data(evening_6pm_idx),
-            "ml_features": {
-                "cumulative_heat_stress": round(float(h_t), 2)
-            }
+            "cumulative_heat_stress": round(float(h_t), 2)
+            
         })
 
     return {
         "current": {
-            "temp_c": current_temp,
-            "humidity": current_rh,
-            "wind_speed": current_wind,
-            "wet_bulb_c": current_wet_bulb,
-            "solar_radiation": current_rad,
-            "precipitation_mm": current_precip,
+            "temp_c": round(current_temp, 2),
+            "humidity": round(current_rh, 2),
+            "wind_speed": round(current_wind, 2),
+            "wet_bulb_c": round(current_wet_bulb, 2),
+            "solar_radiation": round(current_rad, 2),
+            "precipitation_mm": round(current_precip, 2),
             "is_day": current_is_day,
-            "utci_c": round(float(current_utci), 2) # <-- Live UTCI for frontend display
+            "utci_c": round(current_utci, 2),
+            "cumulative_heat_stress": round(float(current_cumul_stress), 2) 
         },
         "forecast": forecast_list
     }
-    
-if __name__ == "__main__":
-    # Example usage
-    lat = 18.52  # Latitude for New Delhi
-    lon =  73.86 # Longitude for New Delhi
-    weather_data = fetch_ward_weather(lat, lon)
-    print(weather_data)

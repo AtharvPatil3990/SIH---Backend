@@ -301,3 +301,5 @@ Desktop.ini
 
 # Raw data
 data/raw/*.xlsx
+
+/public/*
