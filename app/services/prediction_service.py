@@ -48,9 +48,9 @@ def calculate_ward_prediction(ward_uuid: str, supabase_client):
     
     # Run Current Prediction
     current_casualties = max(0, round(float(model.predict(features_current)[0]), 1))
-    if current_casualties > 10: current_tier = "RED_EMERGENCY"
+    if current_casualties > 10: current_tier = "RED_ALERT"
     elif current_casualties > 5: current_tier = "ORANGE_ALERT"
-    elif current_casualties > 2: current_tier = "YELLOW_WARNING"
+    elif current_casualties > 2: current_tier = "YELLOW_ALERT"
     else: current_tier = "NORMAL"
         
     # 4. Construct feature arrays for FORECAST days

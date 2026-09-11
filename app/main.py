@@ -106,10 +106,11 @@ def get_ward_prediction(ward_uuid: str): # <-- Changed to str to accept UUID
         db_rows = weather_res.data
         
         formatted_forecast = []
-        for row in db_rows:
+        for row in db_rows[1:]:
             formatted_forecast.append({
                 "predicted_hospitalizations": row["predicted_hospitalizations"],
                 "alert_tier": row["alert_tier"],
+                "forecast_date": row["forecast_date"],
                 "weather_snapshot": {
                     "night_minimum_5am": row["weather_5am"],
                     "peak_stress_2pm": row["weather_2pm"],
@@ -122,6 +123,7 @@ def get_ward_prediction(ward_uuid: str): # <-- Changed to str to accept UUID
             "data": {
                 "ward_uuid": ward_uuid,
                 "current": {
+                    "forecast_date": db_rows[0]["forecast_date"],
                     "predicted_hospitalizations": db_rows[0]["predicted_hospitalizations"],
                     "alert_tier": db_rows[0]["alert_tier"],
                     "weather_snapshot": {
@@ -137,3 +139,17 @@ def get_ward_prediction(ward_uuid: str): # <-- Changed to str to accept UUID
     # 2. FALLBACK: Cache was empty, pass control to prediction service
     print("Cache miss! Calculating live predictions...")
     return calculate_ward_prediction(ward_uuid, supabase)
+
+@app.get("/api/cache_ward_data")
+def cache_ward_data():
+    try:
+        wards = get_all_wards()
+    
+        for ward in wards:
+            get_ward_prediction(ward_uuid = ward.get('id'))
+        
+        print("Ward data cached successfully.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error caching ward data: {str(e)}")
+        
+# 4b999bda-7211-477c-ac16-e5e7e5116137
