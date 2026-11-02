@@ -149,7 +149,6 @@ def cache_ward_data():
             get_ward_prediction(ward_uuid = ward.get('id'))
         
         print("Ward data cached successfully.")
+        return {"status": "success", "message": "Ward data cached successfully."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error caching ward data: {str(e)}")
-        
-# 4b999bda-7211-477c-ac16-e5e7e5116137
